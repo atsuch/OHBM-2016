@@ -42,13 +42,16 @@ from nilearn_ext.decomposition import compare_components
 from sklearn.externals.joblib import Memory
 
 
+SPARSITY_SIGNS = ['pos', 'neg', 'abs']
+
+
 def get_sparsity_threshold(images, percentile=90):
     """
     Give the list of images calculate the specified
     percentile value of the absolute values across images.
     """
     img_data = [image.get_data() for image in images]
-    dat = np.vstack(img_data)
+    dat = np.concatenate(img_data, axis=3)
     nonzero_dat = dat[np.nonzero(dat)]
     thr = stats.scoreatpercentile(np.abs(nonzero_dat), percentile)
 
@@ -78,7 +81,7 @@ def get_hemi_sparsity(img, hemisphere, threshold=0.000005,
     sparsity_dict = {}
     sparsity_dict["l1"] = np.linalg.norm(hemi_vector, axis=1, ord=1)
     sparsity_dict["vc-pos"] = (hemi_vector > threshold).sum(axis=1)
-    sparsity_dict["vc-neg"] = (hemi_vector < threshold).sum(axis=1)
+    sparsity_dict["vc-neg"] = (hemi_vector < -threshold).sum(axis=1)
     sparsity_dict["vc-abs"] = (np.abs(hemi_vector) > threshold).sum(axis=1)
     sparsity_dict["n_voxels"] = hemi_vector.shape[1]
 
@@ -86,7 +89,7 @@ def get_hemi_sparsity(img, hemisphere, threshold=0.000005,
 
 
 def load_or_generate_summary(images, term_scores, n_components, scoring, dataset,
-                             force=False, sparsity_threshold=0.000005,
+                             force=False, out_dir=None, sparsity_threshold=0.000005,
                              memory=Memory(cachedir='nilearn_cache')):
     """
     For a given n_components, load summary csvs if they already exist, or
@@ -95,7 +98,7 @@ def load_or_generate_summary(images, term_scores, n_components, scoring, dataset
     Returns (wb_summary, R_sparsity, L_sparsity), each of which are DataFrame.
     """
     # Directory to find or save the summary csvs
-    out_dir = op.join('ica_imgs', dataset, 'analyses', str(n_components))
+    out_dir = out_dir or op.join('ica_imgs', dataset, 'analyses', str(n_components))
     summary_csvs = ["wb_summary.csv", "R_sparsity.csv", "L_sparsity.csv"]
 
     # If summary data are already saved as csv files, simply load them
@@ -118,6 +121,7 @@ def load_or_generate_summary(images, term_scores, n_components, scoring, dataset
         img_d, score_mats_d, sign_mats_d = do_main_analysis(
             dataset=dataset, images=images, term_scores=term_scores,
             key=match_method, force=False, plot=force,
+            plot_dir=out_dir,
             n_components=n_components, scoring=scoring)
 
         # 1) Get sparsity for each hemisphere for "wb", "R" and "L" imgs
@@ -179,7 +183,7 @@ def load_or_generate_summary(images, term_scores, n_components, scoring, dataset
 
             matched_scores = score_mat[matched["idx"][0], matched["idx"][1]]
             wb_summary["match%s_score" % comparison[1]] = matched_scores
-            num_unmatched = unmatched.shape[1] if unmatched is not None else 0
+            num_unmatched = unmatched["idx"].shape[1] if unmatched["idx"] is not None else 0
             wb_summary["n_unmatched%s" % comparison[1]] = num_unmatched
 
             # Save wb_summary
@@ -188,52 +192,13 @@ def load_or_generate_summary(images, term_scores, n_components, scoring, dataset
     return (wb_summary, R_sparsity, L_sparsity)
 
 
-def loop_main_and_plot(components, scoring, dataset, query_server=True,
-                       force=False, sparsity_threshold=0.000005, max_images=np.inf,
-                       memory=Memory(cachedir='nilearn_cache')):
-    """
-    Loop main.py to plot summaries of WB vs hemi ICA components
-    """
-    out_dir = op.join('ica_imgs', dataset, 'analyses')
-
-    # Get data once
-    images, term_scores = get_dataset(dataset, max_images=max_images,
-                                      query_server=query_server)
-
-    # Perform ICA for WB, R and L for each n_component once and get images
-    hemis = ("wb", "R", "L")
-    imgs = {hemi: [] for hemi in hemis}
-    for hemi in ("wb", "R", "L"):
-        for c in components:
-            print("Generating or loading ICA components for %s,"
-                  " n=%d components" % (hemi, c))
-            nii_dir = op.join('ica_nii', dataset, str(c))
-            kwargs = dict(images=[im['local_path'] for im in images],
-                          n_components=c, term_scores=term_scores,
-                          out_dir=nii_dir, memory=memory)
-
-            img = load_or_generate_components(hemi=hemi, force=force, **kwargs)
-            imgs[hemi].append(img)
-
-    # Use wb images to determine threshold for voxel count sparsity
-    sparsity_threshold = get_sparsity_threshold(images=imgs["wb"], percentile=90)
-
-    # Initialize master DFs
-    (wb_master, R_master, L_master) = (pd.DataFrame() for i in range(3))
-
-    # Loop again this time to get sparsity info as well matching scores
-    # and generate summary. Note that if force, summary are calculated again
-    # but ICA won't be repeated.
+def generate_component_specific_plots(wb_master, components, out_dir=None):
+    """Asdf"""
+    start_idx = 0
     for c in components:
-        print("Running analysis with %d components" % c)
-        (wb_summary, R_sparsity, L_sparsity) = load_or_generate_summary(
-            images=images, term_scores=term_scores, n_components=c,
-            scoring=scoring, dataset=dataset, force=force,
-            sparsity_threshold=sparsity_threshold, memory=memory)
-        # Append them to master DFs
-        wb_master = wb_master.append(wb_summary)
-        R_master = R_master.append(R_sparsity)
-        L_master = L_master.append(L_sparsity)
+        wb_summary = wb_master[start_idx:(start_idx + c)]
+        assert len(wb_summary) == c
+        start_idx += c
 
         ### Generate component-specific plots ###
         # Save component-specific images in the component dir
@@ -242,7 +207,6 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
         # 1) Relationship between positive and negative HPAI in wb components
         out_path = op.join(comp_outdir, "1_PosNegHPAI_%dcomponents.png" % c)
 
-        sparsity_signs = ['pos', 'neg', 'abs']
         # set color to be proportional to the symmetry in the vc-sparsity (Pos-Neg/Abs),
         # and set size to be proportional to the total vc-sparsity (Abs)
         color = ((wb_summary['vc-posTotal'] - wb_summary['vc-negTotal'])
@@ -280,7 +244,7 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
         fh.suptitle("The relationship between HPAI values and SAS: "
                     "n_components = %d" % c, fontsize=16)
         hpai_sign_colors = {'pos': 'r', 'neg': 'b', 'abs': 'g'}
-        for ax, sign in zip(axes, sparsity_signs):
+        for ax, sign in zip(axes, SPARSITY_SIGNS):
             size = rescale(wb_summary['vc-%sTotal' % sign]) * 2
             ax.scatter(wb_summary['vc-%sHPAI' % sign], wb_summary['wb_SAS'],
                        c=hpai_sign_colors[sign], s=size, edgecolors="grey")
@@ -298,14 +262,8 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
 
         save_and_close(out_path)
 
-    ### Generate plots over a range of specified n_components ###
-    # Reset indices of master DFs and save
-    master_DFs = {"wb_master": wb_master, "R_sparsity": R_master,
-                  "L_sparsity": L_master}
-    for key in master_DFs:
-        master_DFs[key].reset_index(inplace=True)
-        master_DFs[key].to_csv(op.join(out_dir, '%s_summary.csv' % key))
 
+def _generate_plot_1(wb_master, sparsity_threshold, out_dir):
     # 1) HPAI-for pos, neg, and abs in wb components
     out_path = op.join(out_dir, '1_wb_HPAI.png')
 
@@ -315,7 +273,7 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
                    'neg': ['b', 'lightblue', 'below -%d' % sparsity_threshold],
                    'abs': ['g', 'lightgreen', 'with abs value above %d' % sparsity_threshold]}
     by_comp = wb_master.groupby("n_comp")
-    for ax, sign in zip(axes, sparsity_signs):
+    for ax, sign in zip(axes, SPARSITY_SIGNS):
         mean, sd = by_comp.mean()["vc-%sHPAI" % sign], by_comp.std()["vc-%sHPAI" % sign]
         ax.fill_between(components, mean + sd, mean - sd, linewidth=0,
                         facecolor=hpai_styles[sign][1], alpha=0.5)
@@ -331,7 +289,10 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
 
     save_and_close(out_path, fh=fh)
 
+
+def _generate_plot_2(wb_master, R_master, L_master, out_dir):
     # 2) VC and 3) L1 Sparsity comparison between wb and hemi components
+    print "more plots, of sparsity."
     for hemi, hemi_df in zip(("R", "L"), (R_master, L_master)):
         # Prepare summary of sparsity for each hemisphere
         wb_sparsity = wb_master[hemi_df.columns]
@@ -345,7 +306,7 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
         fh, axes = plt.subplots(1, 3, sharex=True, sharey=True, figsize=(18, 6))
         fh.suptitle("Voxel Count Sparsity of each component: Comparison of WB "
                     "and %s-only decomposition" % hemi, fontsize=16)
-        for ax, sign in zip(axes, sparsity_signs):
+        for ax, sign in zip(axes, SPARSITY_SIGNS):
             sns.boxplot(x="n_comp", y="vc-%s_%s" % (sign, hemi), ax=ax,
                         hue="decomposition_type", data=sparsity_summary)
             ax.set_title("%s" % sign)
@@ -358,20 +319,23 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
         # Next L1 norm sparsity
         out_path = op.join(out_dir, '3_l1Sparsity_comparison_%s.png' % hemi)
 
-        fh, ax = plt.subplot(1, 1, figsize=(10, 6))
-        fh.title("L1 Sparsity of each component: Comparison of WB "
-                 "and %s-only decomposition" % hemi, fontsize=16)
-        sns.boxplot(x="n_comp", y="l1_%s" % hemi, ax=ax,
-                    hue="decomposition_type", data=sparsity_summary)
+        fh = plt.figure(figsize=(10, 6))
+        plt.title("L1 Sparsity of each component: Comparison of WB "
+                  "and %s-only decomposition" % hemi, fontsize=16)
+        ax = sns.boxplot(x="n_comp", y="l1_%s" % hemi, ax=ax,
+                         hue="decomposition_type", data=sparsity_summary)
         ax.set_xlabel("Number of components")
         ax.set_ylabel("L1 sparsity values")
 
         save_and_close(out_path, fh=fh)
 
-    # 3) Matching results: average matching scores and proportion of unmatched
-    out_path = op.join(out_dir, '4_Matching_results_box.png')
 
-    score_cols = ["matchR_score", "matchL_score", "matchRL_score"]
+def _generate_plot_3(wb_master, scoring, out_dir):
+
+    # 3) Matching results: average matching scores and proportion of unmatched
+    print "Matching results"
+    out_path = op.join(out_dir, '4_Matching_results_box.png')
+    score_cols = ["matchR_score", "matchL_score", "matchRL-unforced_score"]
     match_scores = pd.melt(wb_master[["n_comp"] + score_cols], id_vars="n_comp",
                            value_vars=score_cols)
 
@@ -402,7 +366,11 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
 
     save_and_close(out_path, fh=fh)
 
+
+def _generate_plot_4(wb_master, scoring, out_dir):
+
     # 4) SAS for wb components and matched RL components
+    print "SAS for wb components"
     out_path = op.join(out_dir, '5_wb_RL_SAS_box.png')
 
     sas_cols = ["wb_SAS", "matchedRL_SAS"]
@@ -418,11 +386,17 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
 
     save_and_close(out_path, fh=fh)
 
+
+def _generate_plot_5(wb_master, scoring, out_dir):
+
     # Same data but with paired dots and lines
     out_path = op.join(out_dir, '5_wb_RL_SAS_dots.png')
 
     fh = plt.figure(figsize=(10, 6))
     plt.title("Spatial Asymmetry Score for WB and the matched RL components")
+    ylabel = "\n".join(wrap("Spatial Asymmetry Score using %s "
+                            "(higher values indicate asymmetry)" % scoring, 50))
+
     # first plot lines between individual plots
     for i in range(len(wb_master.index)):
         linestyle = "-" if (wb_master.wb_SAS[i] - wb_master.matchedRL_SAS[i]) > 0 else "--"
@@ -453,6 +427,73 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
     save_and_close(out_path, fh=fh)
 
 
+def loop_main_and_plot(components, scoring, dataset, query_server=True,
+                       force=False, sparsity_threshold=0.000005, max_images=np.inf,
+                       memory=Memory(cachedir='nilearn_cache')):
+    """
+    Loop main.py to plot summaries of WB vs hemi ICA components
+    """
+    out_dir = op.join('analyses', dataset)
+
+    # Get data once
+    images, term_scores = get_dataset(dataset, max_images=max_images,
+                                      query_server=query_server)
+
+    # Perform ICA for WB, R and L for each n_component once and get images
+    hemis = ("wb", "R", "L")
+    imgs = {hemi: [] for hemi in hemis}
+    for hemi in ("wb", "R", "L"):
+        for c in components:
+            print("Generating or loading ICA components for %s,"
+                  " n=%d components" % (hemi, c))
+            nii_dir = op.join('ica_nii', dataset, str(c))
+            kwargs = dict(images=[im['local_path'] for im in images],
+                          n_components=c, term_scores=term_scores,
+                          out_dir=nii_dir, memory=memory)
+
+            img = load_or_generate_components(hemi=hemi, force=force, **kwargs)
+            imgs[hemi].append(img)
+
+    # Use wb images to determine threshold for voxel count sparsity
+    print("Getting sparsity threshold.")
+    sparsity_threshold = get_sparsity_threshold(images=imgs["wb"], percentile=90)
+
+    # Loop again this time to get sparsity info as well matching scores
+    # and generate summary. Note that if force, summary are calculated again
+    # but ICA won't be repeated.
+    (wb_master, R_master, L_master) = (pd.DataFrame() for i in range(3))
+    for c in components:
+        print("Running analysis with %d components" % c)
+        (wb_summary, R_sparsity, L_sparsity) = load_or_generate_summary(
+            images=images, term_scores=term_scores, n_components=c,
+            scoring=scoring, dataset=dataset, force=force,
+            sparsity_threshold=sparsity_threshold, memory=memory)
+        # Append them to master DFs
+        wb_master = wb_master.append(wb_summary)
+        R_master = R_master.append(R_sparsity)
+        L_master = L_master.append(L_sparsity)
+
+    # Generate plots over a range of specified n_components ###
+    print "Generating plots over a range of components."
+    generate_component_specific_plots(
+        components=components, out_dir=out_dir, wb_master=wb_master)
+
+    # Reset indices of master DFs and save
+    master_DFs = dict(
+        wb_master=wb_master, R_master=R_master, L_master=L_master)
+    for key in master_DFs:
+        master_DFs[key].reset_index(inplace=True)
+        master_DFs[key].to_csv(op.join(out_dir, '%s_summary.csv' % key))
+
+    # Generate main plots
+    _generate_plot_1(wb_master=wb_master, sparsity_threshold=sparsity_threshold,
+                     out_dir=out_dir)
+    _generate_plot_2(out_dir=out_dir, **master_DFs)
+    _generate_plot_3(wb_master=wb_master, scoring=scoring, out_dir=out_dir)
+    _generate_plot_4(wb_master=wb_master, scoring=scoring, out_dir=out_dir)
+    _generate_plot_5(wb_master=wb_master, scoring=scoring, out_dir=out_dir)
+
+
 if __name__ == '__main__':
     import warnings
     from argparse import ArgumentParser
@@ -472,14 +513,12 @@ if __name__ == '__main__':
                         choices=['neurovault', 'abide', 'nyu'])
     parser.add_argument('--scoring', nargs='?', default='correlation',
                         choices=['l1norm', 'l2norm', 'correlation'])
-    parser.add_argument('--max_images', nargs='?', type=int, default=np.inf)
+    parser.add_argument('--max-images', nargs='?', type=int, default=np.inf)
     args = vars(parser.parse_args())
 
     # Alias args
     query_server = not args.pop('offline')
-    # keys = args.pop('key1'), args.pop('key2')
     components = [int(c) for c in args.pop('components').split(',')]
-    dataset = args.pop('dataset')
 
-    loop_main_and_plot(components=components, dataset=dataset,
-                       query_server=query_server, **args)
+    loop_main_and_plot(
+        components=components, query_server=query_server, **args)
