@@ -12,15 +12,14 @@ Note: if using `virtualenv`, run: `fix-osx-virtualenv env/` (if `env/` is your v
 
 Run each script with `--help` to view all script options.
 
-* `main.py` - Downloads images, computes components, compares/matches & plots components.
 * `qc.py` - Downloads images, visualizes them for quality control purposes.
+* `match.py` - Downloads images, computes components, compares/matches & plots components.
 
 
 ### Outputs
 
-For `main.py`:
-* `ica_nii` - directory containing Nifti1 label maps for each of 20 ICA components when run on left-only, right-only, and both hemispheres.
-* `ica_map` - Png images showing each component above (20 for each ICA run) when run on left-only, right-only, and both hemispheres.
-
 For `qc.py`:
 * `qc` - directory of images showing 16 nii files for review. To exclude images / collections, use [`fetch_neurovault`'s filtering procedures](https://github.com/bcipolli/nilearn/blob/neurovault-downloader/nilearn/datasets/func.py#L1505)
+For `match.py`:
+* `ica_nii` - directory containing Nifti1 label maps for each of 20 ICA components when run on left-only, right-only, and both hemispheres.
+* `ica_imgs` - Png images showing each component above (20 for each ICA run) when run on left-only, right-only, and both hemispheres.
