@@ -34,7 +34,7 @@ import pandas as pd
 import seaborn as sns
 from textwrap import wrap
 
-from main import do_main_analysis, get_dataset, load_or_generate_components
+from match import do_match_analysis, get_dataset, load_or_generate_components
 from nilearn_ext.masking import HemisphereMasker
 from nilearn_ext.plotting import save_and_close, rescale
 from nilearn_ext.utils import get_match_idx_pair
@@ -118,7 +118,7 @@ def load_or_generate_summary(images, term_scores, n_components, scoring, dataset
         # Use wb matching in main analysis to get component images and
         # matching scores
         match_method = 'wb'
-        img_d, score_mats_d, sign_mats_d = do_main_analysis(
+        img_d, score_mats_d, sign_mats_d = do_match_analysis(
             dataset=dataset, images=images, term_scores=term_scores,
             key=match_method, force=False, plot=force,
             plot_dir=out_dir,
@@ -147,12 +147,9 @@ def load_or_generate_summary(images, term_scores, n_components, scoring, dataset
                     if "vc" in s_type:
                         # Get n_voxels in each hemi to adjust for the differences in
                         # n_voxels in each hemi when calculating HPAI
-                        n_voxelsR = sparsity_results["R"]["n_voxels"]
-                        n_voxelsL = sparsity_results["L"]["n_voxels"]
-                        n_voxelsB = n_voxelsR + n_voxelsL
-                        df["%sHPAI" % s_type] = (((df["%s_R" % s_type] / n_voxelsR)
-                                                 - (df["%s_L" % s_type] / n_voxelsL))
-                                                 / (df["%sTotal" % s_type] / n_voxelsB))
+                        R_ratio = df["%s_R" % s_type] / sparsity_results["R"]["n_voxels"]
+                        L_ratio = df["%s_L" % s_type] / sparsity_results["L"]["n_voxels"]
+                        df["%sHPAI" % s_type] = (R_ratio - L_ratio) / (R_ratio + L_ratio)
 
         # Save R/L_sparsity DFs
         R_sparsity.to_csv(op.join(out_dir, "R_sparsity.csv"))
@@ -433,7 +430,7 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
     """
     Loop main.py to plot summaries of WB vs hemi ICA components
     """
-    out_dir = op.join('analyses', dataset)
+    out_dir = op.join('ica_imgs', dataset, 'analyses')
 
     # Get data once
     images, term_scores = get_dataset(dataset, max_images=max_images,
