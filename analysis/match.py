@@ -268,12 +268,8 @@ def do_match_analysis(dataset, images, term_scores, key="wb", n_components=20,
 
         # Compare components and plot similarity matrix
         # The sign_mat contains signs that gave the best score for the comparison
-        if plot:
-            score_mat, sign_mat = _compare_components_and_plot(
-                images=img_pair, labels=comp, scoring=scoring, out_dir=plot_dir)
-        else:
-            score_mat, sign_mat = compare_components(
-                images=img_pair, labels=comp, scoring=scoring)
+        score_mat, sign_mat = _compare_components_and_plot(
+            images=img_pair, labels=comp, scoring=scoring, out_dir=plot_dir)
 
         # Store score_mat and sign_mat
         score_mats[comp] = score_mat
@@ -313,12 +309,8 @@ def do_match_analysis(dataset, images, term_scores, key="wb", n_components=20,
         # Note that for wb-matching, diagnal components will be matched by definition
         comp = ('wb', 'RL-%s' % force_status)
         img_pair = [imgs[comp[0]], imgs[comp[1]]]
-        if plot:
-            score_mat, sign_mat = _compare_components_and_plot(
-                images=img_pair, labels=comp, scoring=scoring, out_dir=plot_sub_dir)
-        else:
-            score_mat, sign_mat = compare_components(
-                images=img_pair, labels=comp, scoring=scoring)
+        score_mat, sign_mat = _compare_components_and_plot(
+            images=img_pair, labels=comp, scoring=scoring, out_dir=plot_sub_dir)
 
         # Store score_mat and sign_mat
         score_mats[comp] = score_mat
