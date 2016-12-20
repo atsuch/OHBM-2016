@@ -127,3 +127,18 @@ def get_n_terms(terms, ic_idx, n_terms=4, top_bottom='top', sign=1):
         out_terms = terms[np.argsort(ic_term_vals)[:n_terms]]
 
     return out_terms
+
+
+def get_percentile_val(image, *images, **kwargs):
+    """
+    Given a image (or a list of images), get the percentile of nonzero
+    absolute values ('percentile' keyword)
+    """
+    percentile = kwargs.get('percentile', 90.0)
+    nonzero_img = image.get_data()[np.nonzero(image.get_data())]
+    for i in images:
+        nonzero_img = np.append(nonzero_img, i.get_data()[np.nonzero(i.get_data())])
+
+    val = stats.scoreatpercentile(np.abs(nonzero_img), percentile)
+
+    return val

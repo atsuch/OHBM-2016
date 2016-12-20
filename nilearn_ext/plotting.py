@@ -11,9 +11,8 @@ from matplotlib import pyplot as plt
 from nilearn import datasets
 from nilearn.image import iter_img, index_img, math_img
 from nilearn.plotting import plot_stat_map
-from scipy import stats
 
-from nilearn_ext.utils import reorder_mat, get_n_terms, get_match_idx_pair
+from nilearn_ext.utils import reorder_mat, get_n_terms, get_match_idx_pair, get_percentile_val
 from nilearn_ext.radar import radar_factory
 
 import math
@@ -106,11 +105,8 @@ def plot_components(ica_image, hemi='', out_dir=None,
     print("Plotting %s components..." % hemi)
 
     # Determine threshoold and vmax for all the plots
-    # get nonzero part of the image for proper thresholding of
-    # r- or l- only component
-    nonzero_img = ica_image.get_data()[np.nonzero(ica_image.get_data())]
-    thr = stats.scoreatpercentile(np.abs(nonzero_img), 90)
-    vmax = stats.scoreatpercentile(np.abs(nonzero_img), 99.99)
+    thr = get_percentile_val(ica_image, percentile=90.0)
+    vmax = get_percentile_val(ica_image, percentile=99.99)
     for ci, ic_img in enumerate(iter_img(ica_image)):
 
         title = _title_from_terms(terms=ica_image.terms, ic_idx=ci, label=hemi)
@@ -131,15 +127,12 @@ def plot_components_summary(ica_image, hemi='', out_dir=None,
     n_components = ica_image.get_data().shape[3]
 
     # Determine threshoold and vmax for all the plots
-    # get nonzero part of the image for proper thresholding of
-    # r- or l- only component
-    nonzero_img = ica_image.get_data()[np.nonzero(ica_image.get_data())]
-    thr = stats.scoreatpercentile(np.abs(nonzero_img), 90)
-    vmax = stats.scoreatpercentile(np.abs(nonzero_img), 99.99)
+    thr = get_percentile_val(ica_image, percentile=90.0)
+    vmax = get_percentile_val(ica_image, percentile=99.99)
     for ii, ic_img in enumerate(iter_img(ica_image)):
 
-        ri = ii % 5  # row i
-        ci = (ii / 5) % 5  # column i
+        ri = (ii / 5) % 5  # row i
+        ci = ii % 5  # column i
         pi = ii % 25 + 1  # plot i
         fi = ii / 25  # figure i
 
@@ -188,15 +181,10 @@ def plot_matched_components(images, labels, score_mat, sign_mat,
 
     n_comp = len(idx_pair[0])   # number of comparisons
 
-    # Calculate a vmax optimal across all the plots
-    # get nonzero part of the image for proper thresholding of
-    # r- or l- only component
-    nonzero_imgs = [img.get_data()[np.nonzero(img.get_data())]
-                    for img in images]
-    dat = np.append(nonzero_imgs[0], nonzero_imgs[1])
-    vmax = stats.scoreatpercentile(np.abs(dat), 99.99)
+    # Calculate a thr and vmax optimal across all the plots
+    thr = get_percentile_val(*images, percentile=90.0)
+    vmax = get_percentile_val(*images, percentile=99.99)
 
-    print("Plotting results.")
     for i in range(n_comp):
         c1i, c2i = idx_pair[0][i], idx_pair[1][i]
         cis = [c1i, c2i]
@@ -204,7 +192,7 @@ def plot_matched_components(images, labels, score_mat, sign_mat,
         prefix = "unmatched-" if i >= n_components else ""
         num = i - n_components if i >= n_components else i
         png_name = '%s%s_%s_%s.png' % (prefix, labels[0], labels[1], num)
-        print "plotting %s" % png_name
+        print "plotting %s, %sforcing one-to-one match: %s" % (png_name, '' if force else 'not ')
 
         comp_imgs = [index_img(img, ci) for img, ci in zip(images, cis)]
 
@@ -224,7 +212,7 @@ def plot_matched_components(images, labels, score_mat, sign_mat,
             fh = plt.figure(figsize=(14, 8))
             plot_stat_map(
                 comp, axes=fh.gca(), title="\n".join(titles), black_bg=True,
-                symmetric_cbar=True, vmax=vmax)
+                symmetric_cbar=True, threshold=thr, vmax=vmax)
 
         else:
             # Show two images, one above the other.
@@ -239,16 +227,16 @@ def plot_matched_components(images, labels, score_mat, sign_mat,
                     label=labels[ii], sign=signs[ii])
 
                 if ii == 0:
-                    display = plot_stat_map(comp, axes=ax, title=title,    # noqaax.matchow color map
-                                            black_bg=True, symmetric_cbar=True,
-                                            vmax=vmax)
+                    display = plot_stat_map(
+                        comp, axes=ax, title=title, black_bg=True,
+                        symmetric_cbar=True, threshold=thr, vmax=vmax)
                 else:
                     # use same cut coords
                     cut_coords = display.cut_coords  # noqa
-                    display = plot_stat_map(comp, axes=ax, title=title,
-                                            black_bg=True, symmetric_cbar=True,
-                                            vmax=vmax, display_mode='ortho',
-                                            cut_coords=cut_coords)
+                    display = plot_stat_map(
+                        comp, axes=ax, title=title, black_bg=True,
+                        symmetric_cbar=True, threshold=thr, vmax=vmax,
+                        display_mode='ortho', cut_coords=cut_coords)
 
         # Save images instead of displaying
         if out_dir is not None:
