@@ -114,68 +114,58 @@ def generate_components(images, hemi, term_scores=None,
     return ica_image
 
 
-def compare_components(images, labels, scoring='correlation', flip=True,
-                       memory=Memory(cachedir='nilearn_cache')):
+def compare_components(images, labels, scoring='correlation', flip=True):
+    """
+    Given a pair of component images with the same n of components, compare
+    and give a matrix of dissimilarity scores using the specified method
+    (correlation (default), l1norm, l2norm, or any other user-specified function).
+
+    If flip=True, images will be flipped and the lowest dissimilarity score (i.e.
+    more similar side) will be given in the resulting score_mat. It also outputs
+    sign_mat that indicate any sign-flipping.
+    """
     assert len(images) == 2
     assert len(labels) == 2
     assert images[0].shape == images[1].shape
     n_components = images[0].shape[3]  # values @ 0 and 1 are the same
     labels = [l.upper() for l in labels]  # make input labels case insensitive
-    print("Loading images.")
-    for img in images:
-        img.get_data()  # Just loaded to get them in memory..
 
-    print("Scoring closest components (by %s)" % str(scoring))
+    print("Scoring components (by %s)" % str(scoring))
     score_mat = np.zeros((n_components, n_components))
     sign_mat = np.zeros((n_components, n_components), dtype=np.int)
-    c1_data = [None] * n_components
-    c2_data = [None] * n_components
 
-    c1_images = list(iter_img(images[0]))
-    c2_images = list(iter_img(images[1]))
+    c1_img, c2_img = images[0], images[1]
 
-    lh_masker = HemisphereMasker(hemisphere='L', memory=memory).fit()
-    rh_masker = HemisphereMasker(hemisphere='R', memory=memory).fit()
+    # Use lh mask for R vs L to ensure the same size
+    if 'R' in labels and 'L' in labels:
+        mask = get_mask_by_key("L")
+        # Flip R image
+        if labels.index('R') == 0:
+            c1_img = flip_img_lr(c1_img)
+        else:
+            c2_img = flip_img_lr(c2_img)
 
-    for c1i, comp1 in enumerate(c1_images):
-        for c2i, comp2 in enumerate(c2_images):
-            # Make sure the two images align (i.e. not R and L opposite),
-            #   and that only good voxels are compared (i.e. not full vs half)
-            if 'R' in labels and 'L' in labels:
-                if c1_data[c1i] is None or c2_data[c2i] is None:
-                    R_img = comp1 if labels.index('R') == 0 else comp2  # noqa
-                    L_img = comp1 if labels.index('L') == 0 else comp2  # noqa
-                    masker = lh_masker  # use same masker; ensures same size
-                if c1_data[c1i] is None:
-                    c1_data[c1i] = masker.transform(flip_img_lr(R_img)).ravel()
-                if c2_data[c2i] is None:
-                    c2_data[c2i] = masker.transform(L_img).ravel()
+    elif 'R' in labels or 'L' in labels:
+        mask = get_mask_by_key("R") if 'R' in labels else get_mask_by_key("L")
 
-            elif 'R' in labels or 'L' in labels:
-                masker = rh_masker if 'R' in labels else lh_masker
-                if c1_data[c1i] is None:
-                    c1_data[c1i] = masker.transform(comp1).ravel()
-                if c2_data[c2i] is None:
-                    c2_data[c2i] = masker.transform(comp2).ravel()
+    # Use wb mask for wb vs RL comparison
+    else:
+        mask = get_mask_by_key("wb")
 
-            else:
-                if c1_data[c1i] is None:
-                    c1_data[c1i] = comp1.get_data().ravel()
-                if c2_data[c2i] is None:
-                    c2_data[c2i] = comp2.get_data().ravel()
+    # Apply mask to get image data.
+    c1_dat, c2_dat = [apply_mask(img, mask) for img in (c1_img, c2_img)]
 
+    for c1i, comp1 in enumerate(c1_dat):
+        for c2i, comp2 in enumerate(c2_dat):
             # Choose a scoring system.
             # Score should indicate DISSIMILARITY
             # Component sign is meaningless, so try both unless flip = False,
             # and keep track of comparisons that had better score
             # when flipping the sign
             score = np.inf
-            if flip:
-                signs = [1, -1]
-            else:
-                signs = [1]
+            signs = [1, -1] if flip else [1]
             for sign in signs:
-                c1d, c2d = c1_data[c1i], sign * c2_data[c2i]
+                c1d, c2d = comp1, sign * comp2
                 if not isinstance(scoring, string_types):  # function
                     sc = scoring(c1d, c2d)
                 elif scoring == 'l1norm':
@@ -194,25 +184,11 @@ def compare_components(images, labels, scoring='correlation', flip=True,
     return score_mat, sign_mat
 
 
-def compare_RL(wb_img, scoring="correlation",
-               memory=Memory(cachedir='nilearn_cache')):
+def compare_RL(wb_img, scoring="correlation"):
     """Compare R and L side of the whole-brain image using the specified method"""
-    n_components = wb_img.shape[3]
-
-    # Use only lh_masker to ensure the same size
-    mask = get_mask_by_key("L")
-    masked_r = apply_mask(flip_img_lr(wb_img), mask)
-    masked_l = apply_mask(wb_img, mask)
-
     print("Comparing R and L spatial similarity using %s" % scoring)
-    score_arr = np.zeros(n_components)
-    for i in range(n_components):
-        if not isinstance(scoring, string_types):  # function
-            sc = scoring(masked_r[i], masked_l[i])
-        elif scoring == 'correlation':
-            sc = stats.stats.pearsonr(masked_r[i], masked_l[i])[0]
-        else:
-            raise NotImplementedError(scoring)
-        score_arr[i] = sc
+    score_mat, sign_mat = compare_components((wb_img, wb_img), ("R", "L"), scoring=scoring)
+    # score_mat is measure of dissimilarity, so convert it to similarity measure
+    score_arr = 1 - score_mat.diagonal()
 
     return score_arr
