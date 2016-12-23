@@ -34,19 +34,68 @@ import numpy as np
 import pandas as pd
 import scipy.stats as stats
 import seaborn as sns
+
+from nibabel_ext import NiftiImageWithTerms
+from nilearn import datasets
 from nilearn.image import index_img, math_img
 from nilearn.plotting import plot_stat_map
 from sklearn.externals.joblib import Memory
 from textwrap import wrap
 
-from analysis.acni import plot_acni
-from analysis.hpai import plot_hpai
-from analysis.match import get_dataset, load_or_generate_components
-from analysis.sparsity import SPARSITY_SIGNS, get_sparsity_threshold, plot_sparsity
-from analysis.sss import plot_matching, plot_sss
-from analysis.summary import load_or_generate_summary
-# from nilearn_ext.decomposition import compare_components
-from nilearn_ext.plotting import save_and_close, rescale  # , plot_comparison_matrix
+from nilearn_ext.datasets import fetch_neurovault
+from nilearn_ext.decomposition import generate_components
+from nilearn_ext.plotting import (save_and_close, rescale, plot_components,
+                                  plot_components_summary)
+from image_analysis.hpai import plot_hpai
+from image_analysis.sparsity import SPARSITY_SIGNS, get_sparsity_threshold, plot_sparsity
+from image_analysis.sss import plot_matching, plot_sss
+from image_analysis.acni import plot_acni
+from image_analysis.summary import load_or_generate_summary
+
+
+def get_dataset(dataset, max_images=np.inf, **kwargs):
+    """Retrieve & normalize dataset from nilearn"""
+    # Download
+    if dataset == 'neurovault':
+        images, term_scores = fetch_neurovault(max_images=max_images, **kwargs)
+
+    elif dataset == 'abide':
+        dataset = datasets.fetch_abide_pcp(
+            n_subjects=min(94, max_images), **kwargs)
+        images = [{'absolute_path': p} for p in dataset['func_preproc']]
+        term_scores = None
+
+    elif dataset == 'nyu':
+        dataset = datasets.fetch_nyu_rest(
+            n_subjects=min(25, max_images), **kwargs)
+        images = [{'absolute_path': p} for p in dataset['func']]
+        term_scores = None
+
+    else:
+        raise ValueError("Unknown dataset: %s" % dataset)
+    return images, term_scores
+
+
+def load_or_generate_components(hemi, out_dir='.', force=False,
+                                plot_dir=None, no_plot=False,
+                                *args, **kwargs):
+    """Load an image and return if it exists, otherwise compute via ICA"""
+    # Only re-run if image doesn't exist.
+    img_path = op.join(out_dir, '%s_ica_components.nii.gz' % hemi)
+    generate_imgs = force or not op.exists(img_path)
+    no_plot = no_plot or not generate_imgs
+
+    if generate_imgs:
+        img = generate_components(hemi=hemi, out_dir=out_dir, *args, **kwargs)
+    else:
+        img = NiftiImageWithTerms.from_filename(img_path)
+
+    if not no_plot:
+        plot_dir = plot_dir or op.join(out_dir, 'png')
+        plot_components(img, hemi=hemi, out_dir=plot_dir)
+        plot_components_summary(img, hemi=hemi, out_dir=plot_dir)
+
+    return img
 
 
 def generate_component_specific_plots(wb_master, components, scoring, out_dir=None):
@@ -125,8 +174,8 @@ def generate_component_specific_plots(wb_master, components, scoring, out_dir=No
         save_and_close(out_path)
 
 
-def plot_variations_wb_vs_RL(imgs, wb_master, metric='correlation', out_dir=None):
-    components = np.unique(wb_master['n_comp'])
+def plot_variations_wb_vs_RL(imgs, wb_summary, metric='correlation', out_dir=None):
+    components = np.unique(wb_summary['n_comp'])
     out_file = out_dir and op.join(
         out_dir,
         'comparison_img_%s.%s.nii' % (
@@ -139,36 +188,34 @@ def plot_variations_wb_vs_RL(imgs, wb_master, metric='correlation', out_dir=None
 
     else:
         # Reorder r and l such that they best match wb.
-        for ci, c in enumerate(components):
-            wb_summary = wb_master[wb_master['n_comp'] == c]
-            for k in ['R', 'L']:
-                # Reorder & flip sign on the components within each image
-                img = imgs[k][ci]
-                idx = wb_summary['matched%s' % k].astype(int)
-                idx, sign = np.abs(idx), np.sign(idx)
+        reordered = {}
+        for k in ['R', 'L']:
+            # Reorder & flip sign on the components within each image
+            img = imgs[k]
+            idx = wb_summary['matched%s' % k].astype(int)
+            idx, sign = np.abs(idx), np.sign(idx)
+            print idx, sign
 
-                imgs[k][ci] = nib.concat_images(
-                    [math_img('img * %d' % si, img=index_img(img, ii))
-                     for ii, si in zip(idx, sign)])
-
-        # Concatenate all ica components into a single image, per condition
-        feature_vecs = dict([(k, nib.concat_images(v, axis=3)) for k, v in imgs.items()])
+            reordered[k] = nib.concat_images(
+                [math_img('img * %d' % si, img=index_img(img, ii))
+                 for ii, si in zip(idx, sign)])
+            plot_components_summary(reordered[k], hemi='reordered%s' % k, out_dir=out_dir)
 
         # Make a comparison for wb vs. rl
-        feature_vecs['rl'] = math_img('R+L', **feature_vecs)
+        imgs['rl'] = math_img('R+L', **reordered)
 
         # Now do the dot product.
         if metric == 'l1':
-            comparison_img = math_img('np.sum(np.abs(rl - wb), axis=3)', **feature_vecs)
+            comparison_img = math_img('np.sum(np.abs(rl - wb), axis=3)', **imgs)
         elif metric == 'l2':
-            comparison_img = math_img('np.sqrt(np.sum((rl - wb)**2, axis=3))', **feature_vecs)
+            comparison_img = math_img('np.sqrt(np.sum((rl - wb)**2, axis=3))', **imgs)
         elif metric == 'correlation':
             from nilearn.masking import apply_mask, unmask
             from nilearn_ext.masking import get_mask_by_key
 
             wb_mask = get_mask_by_key('wb')
-            wb_data = apply_mask(feature_vecs['wb'], wb_mask)
-            rl_data = apply_mask(feature_vecs['rl'], wb_mask)
+            wb_data = apply_mask(imgs['wb'], wb_mask)
+            rl_data = apply_mask(imgs['rl'], wb_mask)
             img_data = np.zeros((rl_data.shape[1],))
             for vi in range(img_data.size):
                 img_data[vi] = stats.stats.pearsonr(
@@ -178,6 +225,10 @@ def plot_variations_wb_vs_RL(imgs, wb_master, metric='correlation', out_dir=None
         else:
             raise ValueError("Unknown metric: %s" % metric)
         nib.save(comparison_img, out_file)
+
+    # Plot components to make sure it's working...
+    for hemi in ('wb', 'R', 'L', 'rl'):
+        plot_components_summary(imgs[hemi], hemi=hemi, out_dir=out_dir)
 
     # Plot the comparison image
     for mode in ['x', 'y', 'z']:
@@ -189,26 +240,28 @@ def plot_variations_wb_vs_RL(imgs, wb_master, metric='correlation', out_dir=None
             save_and_close(plot_file)
 
 
+### WIP ###
 def loop_main_and_plot(components, scoring, dataset, query_server=True,
                        force=False, plot=True, max_images=np.inf,
                        memory=Memory(cachedir='nilearn_cache')):
     """
     Loop main.py to plot summaries of WB vs hemi ICA components
     """
-    out_dir = op.join('ica_imgs', dataset, 'analyses')
+    out_dir = op.join('ica_imgs', dataset)
 
     # Get data once
     images, term_scores = get_dataset(dataset, max_images=max_images,
                                       query_server=query_server)
 
-    # Perform ICA for WB, R and L for each n_component once and get images
+    # Perform ICA for WB, R and L for each n_component once and
+    # run match analysis. Also store each component images
     hemis = ("wb", "R", "L")
     imgs = {hemi: [] for hemi in hemis}
-    for hemi in ("wb", "R", "L"):
-        for c in components:
+    for c in components:
+        for hemi in hemis:
             print("Generating or loading ICA components for %s,"
                   " n=%d components" % (hemi, c))
-            nii_dir = op.join('ica_nii', dataset, str(c))
+            nii_dir = op.join('ica_nii', dataset, '%dics' % c)
             kwargs = dict(images=[im['absolute_path'] for im in images],
                           n_components=c, term_scores=term_scores,
                           out_dir=nii_dir, memory=memory)
@@ -216,6 +269,11 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
             img = load_or_generate_components(
                 hemi=hemi, force=force, no_plot=not plot, **kwargs)
             imgs[hemi].append(img)
+
+        print ("Running match analysis for n=%d components" % c)
+        ica_images = {hemi: imgs[hemi][-1] for hemi in hemis}
+        # Call match.py with ica_images to perform matching. Decide
+        # what output to keep (score_mat for all the combination of matching?)
 
     # Use wb images to determine threshold for voxel count sparsity
     print("Getting sparsity threshold.")
@@ -225,19 +283,25 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
     print("Using global sparsity threshold of %0.8f for sparsity calculation"
           % sparsity_threshold)
 
-    # Loop again this time to get values of interest and generate summary.
-    # Note that if force, summary are calculated again but ICA won't be repeated.
+    # Loop again this time to perform image analyses on wb, R, L component images
     (wb_master, R_master, L_master) = (pd.DataFrame() for i in range(3))
-    for c in components:
-        print("Running analysis with %d components" % c)
-        (wb_summary, R_summary, L_summary) = load_or_generate_summary(
-            images=images, term_scores=term_scores, n_components=c,
-            scoring=scoring, dataset=dataset, sparsity_threshold=sparsity_threshold,
-            acni_percentile=95.0, hpai_percentile=95.0, force=force, memory=memory)
+    for ci, c in enumerate(components):
+        for hemi in hemis:
+            print("Running image analysis for %s ICA, %d components" % (hemi, c))
+            summary = load_or_generate_summary(
+            ica_image, hemi=hemi, n_components=c, dataset=dataset,
+            sparsity_threshold=sparsity_threshold, acni_percentile=95.0,
+            hpai_percentile=95.0, force=force)
         # Append them to master DFs
         wb_master = wb_master.append(wb_summary)
         R_master = R_master.append(R_summary)
         L_master = L_master.append(L_summary)
+
+        # Generate plots of variations in wb vs RL
+        print "Examining differences in wb vs. rl for %d components..." % c
+        comp_dir = op.join(out_dir, str(c))
+        comp_imgs = {hemi: imgs[hemi][ci] for hemi in hemis}
+        plot_variations_wb_vs_RL(comp_imgs, wb_summary, out_dir=comp_dir)
 
     # Reset indices of master DFs and save
     master_DFs = dict(
@@ -245,10 +309,6 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
     for key in master_DFs:
         master_DFs[key].reset_index(inplace=True)
         master_DFs[key].to_csv(op.join(out_dir, '%s_summary.csv' % key))
-
-    # Generate plots
-    print "Examining differences in wb vs. rl..."
-    plot_variations_wb_vs_RL(imgs, wb_master, out_dir=out_dir)
 
     # To set size proportional to vc sparsity in several graphs, add columns with
     # vc vals
@@ -267,6 +327,8 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
     plot_matching(wb_master=wb_master, scoring=scoring, out_dir=out_dir)
     plot_sss(wb_master=wb_master, scoring=scoring, out_dir=out_dir)
     plot_acni(out_dir=out_dir, **master_DFs)
+
+    # Need to figure out what summary/plots should be generated for matching performance
 
 
 if __name__ == '__main__':
