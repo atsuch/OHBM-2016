@@ -114,6 +114,34 @@ def generate_components(images, hemi, term_scores=None,
     return ica_image
 
 
+def get_dissimilarity_score(dat_pair, scoring='correlation'):
+    """
+    Given a pair of numpy vectors of the same length, calculate the
+    dissimilarity score based on the specified scoring method.
+
+    'correlation': 1-pearson correlation (default)
+    'l1norm': l1 distance
+    'l2norm': l2 distance
+    User can also specify a function.
+    """
+    assert len(dat_pair) == 2
+    assert dat_pair[0].shape == dat_pair[1].shape
+    assert dat_pair[0].ndim == 1
+
+    if not isinstance(scoring, string_types):  # function
+        score = scoring(dat_pair[0], dat_pair[1])
+    elif scoring == 'l1norm':
+        score = np.linalg.norm(dat_pair[0] - dat_pair[1], ord=1)
+    elif scoring == 'l2norm':
+        score = np.linalg.norm(dat_pair[0] - dat_pair[1], ord=2)
+    elif scoring == 'correlation':
+        score = 1 - stats.stats.pearsonr(dat_pair[0], dat_pair[1])[0]
+    else:
+        raise NotImplementedError(scoring)
+
+    return score
+
+
 def compare_components(images, labels, scoring='correlation', flip=True):
     """
     Given a pair of component images with the same n of components, compare
@@ -166,16 +194,7 @@ def compare_components(images, labels, scoring='correlation', flip=True):
             signs = [1, -1] if flip else [1]
             for sign in signs:
                 c1d, c2d = comp1, sign * comp2
-                if not isinstance(scoring, string_types):  # function
-                    sc = scoring(c1d, c2d)
-                elif scoring == 'l1norm':
-                    sc = np.linalg.norm(c1d - c2d, ord=1)
-                elif scoring == 'l2norm':
-                    sc = np.linalg.norm(c1d - c2d, ord=2)
-                elif scoring == 'correlation':
-                    sc = 1 - stats.stats.pearsonr(c1d, c2d)[0]
-                else:
-                    raise NotImplementedError(scoring)
+                sc = get_dissimilarity_score((c1d, c2d), scoring=scoring)
                 if sc < score:
                     sign_mat[c1i, c2i] = sign
                 score = min(score, sc)
@@ -186,9 +205,16 @@ def compare_components(images, labels, scoring='correlation', flip=True):
 
 def compare_RL(wb_img, scoring="correlation"):
     """Compare R and L side of the whole-brain image using the specified method"""
+    n_components = wb_img.shape[3]
+
+    # Use only lh_masker to ensure the same size
+    mask = get_mask_by_key("L")
+    masked_r = apply_mask(flip_img_lr(wb_img), mask)
+    masked_l = apply_mask(wb_img, mask)
     print("Comparing R and L spatial similarity using %s" % scoring)
-    score_mat, sign_mat = compare_components((wb_img, wb_img), ("R", "L"), scoring=scoring)
-    # score_mat is measure of dissimilarity, so convert it to similarity measure
-    score_arr = 1 - score_mat.diagonal()
+    score_arr = np.zeros(n_components)
+    for i in range(n_components):
+        # convert dissimilarity score to similarity score
+        score_arr[i] = 1 - get_dissimilarity_score((masked_r[i], masked_l[i]), scoring=scoring)
 
     return score_arr
