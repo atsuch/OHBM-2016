@@ -48,7 +48,7 @@ from nilearn_ext.plotting import (save_and_close, rescale, plot_components,
                                   plot_components_summary)
 from image_analysis.hpai import plot_hpai
 from image_analysis.sparsity import SPARSITY_SIGNS, get_sparsity_threshold, plot_sparsity
-from image_analysis.sss import plot_matching, plot_sss
+from image_analysis.sss import plot_sss
 from image_analysis.acni import plot_acni
 from image_analysis.summary import load_or_generate_summary
 
@@ -261,7 +261,7 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
         for hemi in hemis:
             print("Generating or loading ICA components for %s,"
                   " n=%d components" % (hemi, c))
-            nii_dir = op.join('ica_nii', dataset, '%dics' % c)
+            nii_dir = op.join('ica_nii', dataset, '%d' % c)
             kwargs = dict(images=[im['absolute_path'] for im in images],
                           n_components=c, term_scores=term_scores,
                           out_dir=nii_dir, memory=memory)
@@ -275,6 +275,15 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
         # Call match.py with ica_images to perform matching. Decide
         # what output to keep (score_mat for all the combination of matching?)
 
+        # Generate plots of variations in wb vs RL
+        # This depends on the matching method, so make use of the output from
+        # above call to match.py
+
+        # print "Examining differences in wb vs. rl for %d components..." % c
+        # comp_dir = op.join(out_dir, str(c))
+        # comp_imgs = {hemi: imgs[hemi][ci] for hemi in hemis}
+        # plot_variations_wb_vs_RL(comp_imgs, wb_summary, out_dir=comp_dir)
+
     # Use wb images to determine threshold for voxel count sparsity
     print("Getting sparsity threshold.")
     global_percentile = 99.9
@@ -284,34 +293,24 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
           % sparsity_threshold)
 
     # Loop again this time to perform image analyses on wb, R, L component images
-    (wb_master, R_master, L_master) = (pd.DataFrame() for i in range(3))
+    master_DFs = {"%s_master" % hemi: pd.DataFrame() for hemi in hemis}
     for ci, c in enumerate(components):
         for hemi in hemis:
             print("Running image analysis for %s ICA, %d components" % (hemi, c))
             summary = load_or_generate_summary(
-            ica_image, hemi=hemi, n_components=c, dataset=dataset,
-            sparsity_threshold=sparsity_threshold, acni_percentile=95.0,
-            hpai_percentile=95.0, force=force)
-        # Append them to master DFs
-        wb_master = wb_master.append(wb_summary)
-        R_master = R_master.append(R_summary)
-        L_master = L_master.append(L_summary)
-
-        # Generate plots of variations in wb vs RL
-        print "Examining differences in wb vs. rl for %d components..." % c
-        comp_dir = op.join(out_dir, str(c))
-        comp_imgs = {hemi: imgs[hemi][ci] for hemi in hemis}
-        plot_variations_wb_vs_RL(comp_imgs, wb_summary, out_dir=comp_dir)
+                imgs[hemi][ci], hemi=hemi, n_components=c, dataset=dataset,
+                sparsity_threshold=sparsity_threshold, acni_percentile=95.0,
+                hpai_percentile=95.0)
+            master_DFs["%s_master" % hemi] = master_DFs["%s_master" % hemi].append(summary)
 
     # Reset indices of master DFs and save
-    master_DFs = dict(
-        wb_master=wb_master, R_master=R_master, L_master=L_master)
     for key in master_DFs:
         master_DFs[key].reset_index(inplace=True)
-        master_DFs[key].to_csv(op.join(out_dir, '%s_summary.csv' % key))
+        master_DFs[key].to_csv(op.join(out_dir, '%sICA_im_analsis_summary.csv' % key))
 
-    # To set size proportional to vc sparsity in several graphs, add columns with
-    # vc vals
+    # To set size proportional to vc sparsity in several graphs,
+    # add columns with vc vals
+    wb_master = master_DFs["wb_master"]
     for sign in SPARSITY_SIGNS:
         wb_master["rescaled_vc_%s" % sign] = rescale(wb_master["vc-%s_wb" % sign])
 
@@ -324,11 +323,14 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
     print "Generating summary plots.."
     plot_hpai(wb_master=wb_master, sparsity_threshold=sparsity_threshold, out_dir=out_dir)
     plot_sparsity(out_dir=out_dir, **master_DFs)
-    plot_matching(wb_master=wb_master, scoring=scoring, out_dir=out_dir)
-    plot_sss(wb_master=wb_master, scoring=scoring, out_dir=out_dir)
+
+    # SSS plot is the only one that use matching results to compare
+    # wb and matched RL SSS, so decide later what to do...
+    # plot_sss(wb_master=wb_master, scoring=scoring, out_dir=out_dir)
     plot_acni(out_dir=out_dir, **master_DFs)
 
     # Need to figure out what summary/plots should be generated for matching performance
+    # plot_matching(wb_master=wb_master, scoring=scoring, out_dir=out_dir)
 
 
 if __name__ == '__main__':
