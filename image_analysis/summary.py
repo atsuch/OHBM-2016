@@ -25,7 +25,7 @@ def load_or_generate_summary(ica_image, hemi, n_components, dataset,
     """
     # Directory to find or save the summary csvs
     out_dir = out_dir or op.join('ica_imgs', dataset, str(n_components))
-    summary_csv = "%sICA_im_analysis.csv"
+    summary_csv = "%s_ICA_im_analysis.csv" % hemi
 
     # If summary data are already saved as csv file, simply load them
     if not force and op.exists(op.join(out_dir, summary_csv)):
@@ -61,8 +61,8 @@ def load_or_generate_summary(ica_image, hemi, n_components, dataset,
             for sign in SPARSITY_SIGNS:
                 summary["%sHPAI" % sign] = hpai_d[sign]
 
-        # Also for "wb" only 4) Get SSS (Spatial symmetry score).
-        summary["SSS"] = compare_RL(ica_image)
+            # Also for "wb" only 4) Get SSS (Spatial symmetry score).
+            summary["SSS"] = compare_RL(ica_image)
 
         # Save DF
         summary.to_csv(op.join(out_dir, summary_csv))

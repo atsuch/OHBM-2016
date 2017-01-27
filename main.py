@@ -156,7 +156,7 @@ def generate_component_specific_plots(wb_master, components, scoring, out_dir=No
                        'abs': (colors[2], colors[3])}
         for ax, sign in zip(axes, SPARSITY_SIGNS):
             size = wb_summary['rescaled_vc_%s' % sign]
-            ax.scatter(wb_summary['%sHPAI' % sign], wb_summary['wb_SSS'],
+            ax.scatter(wb_summary['%sHPAI' % sign], wb_summary['SSS'],
                        c=hpai_colors[sign][0], s=size,
                        edgecolors=hpai_colors[sign][1])
             ax.set_xlabel("%s HPAI" % sign)
@@ -304,9 +304,9 @@ def loop_main_and_plot(components, scoring, dataset, query_server=True,
             master_DFs["%s_master" % hemi] = master_DFs["%s_master" % hemi].append(summary)
 
     # Reset indices of master DFs and save
-    for key in master_DFs:
+    for hemi, key in zip(hemis, master_DFs):
         master_DFs[key].reset_index(inplace=True)
-        master_DFs[key].to_csv(op.join(out_dir, '%sICA_im_analsis_summary.csv' % key))
+        master_DFs[key].to_csv(op.join(out_dir, '%sICA_im_analsis_summary.csv' % hemi))
 
     # To set size proportional to vc sparsity in several graphs,
     # add columns with vc vals

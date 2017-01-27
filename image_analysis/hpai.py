@@ -44,6 +44,7 @@ def calculate_hpai(wb_img, percentile=95.0):
     hemi_mask = get_mask_by_key("L")
     masked_r = apply_mask(flip_img_lr(wb_img), hemi_mask)
     masked_l = apply_mask(wb_img, hemi_mask)
+    default_settings = np.seterr(all='ignore')
     for sign in SPARSITY_SIGNS:
         if sign == "pos":
             voxel_r = np.sum(masked_r > reshaped_thr, axis=1)
@@ -56,7 +57,7 @@ def calculate_hpai(wb_img, percentile=95.0):
             voxel_l = np.sum(np.abs(masked_l) > reshaped_thr, axis=1)
 
         hpai_d[sign] = np.divide((voxel_r - voxel_l), (voxel_r + voxel_l).astype(float))
-
+    np.seterr(**default_settings)
     return hpai_d
 
 
